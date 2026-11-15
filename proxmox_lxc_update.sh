@@ -78,6 +78,27 @@ send_to_discord() {
 }
 trap send_to_discord EXIT
 
+# Refresh host package lists without installing host packages. Treat any
+# repository fetch failure as a failed refresh rather than reporting stale data.
+HOST_APT_TIMEOUT="300s"
+echo "Refreshing package lists on Proxmox host..."
+if timeout "$HOST_APT_TIMEOUT" apt-get -o APT::Update::Error-Mode=any update >/dev/null 2>&1; then
+    HOST_REFRESH_TIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
+    if HOST_UPGRADABLE=$(LC_ALL=C apt list --upgradable 2>/dev/null); then
+        if [[ "$HOST_UPGRADABLE" == Listing* ]]; then
+            HOST_COUNT=$(printf '%s\n' "$HOST_UPGRADABLE" | awk 'NR > 1 && NF {n++} END {print n+0}')
+            echo "📦 Host APT: Package lists refreshed $HOST_REFRESH_TIME; $HOST_COUNT packages listed as upgradable (none installed on host)." >> "$SUMMARY_FILE"
+        else
+            echo "⚠️ Host APT: Refreshed $HOST_REFRESH_TIME, but could not interpret upgradable package list." >> "$SUMMARY_FILE"
+        fi
+    else
+        echo "⚠️ Host APT: Refreshed $HOST_REFRESH_TIME, but could not list upgradable packages." >> "$SUMMARY_FILE"
+    fi
+else
+    HOST_APT_STATUS=$?
+    echo "⚠️ Host APT: Package list refresh failed or timed out (exit $HOST_APT_STATUS); upgradable package count unavailable." >> "$SUMMARY_FILE"
+fi
+
 # Get a list of all running LXC container IDs
 RUNNING_LXCS=$(pct list | awk 'NR>1 && /running/ {print $1}')
 

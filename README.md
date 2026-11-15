@@ -1,6 +1,6 @@
 # Proxmox LXC Autonomous Updater
 
-A Bash script for a Proxmox VE host that discovers running LXC containers, performs Debian-style package updates sequentially and reports a summary locally or to a Discord webhook.
+A Bash script that refreshes Proxmox host package lists, reports the number of packages listed as upgradable, updates running LXC containers sequentially, and reports a summary locally or to a Discord webhook. It does not install host package upgrades.
 
 > **Important:** This script makes real changes inside every running container on the host. It runs `apt-get update`, `upgrade`, `dist-upgrade`, `autoremove`, and `clean` inside running containers. `dist-upgrade` and `autoremove` can remove packages; upgrades can change or restart services. It does not run application update helpers. Review it, ensure tested backups are available, and use a maintenance window. There is no dry-run mode or container exclusion list.
 
@@ -8,15 +8,16 @@ A Bash script for a Proxmox VE host that discovers running LXC containers, perfo
 
 - Run on a Proxmox VE host with sufficient privileges to use `pct list` and `pct exec` (typically root).
 - Containers must support Bash, `apt-get`, GNU `timeout`, and the utilities used by the update script. It is intended for Debian/Ubuntu-style containers, not arbitrary container distributions.
-- Host utilities include Bash, `pct`, `awk`, `mktemp`, `hostname`, `date`, `python3`, `curl`, `head`, and standard coreutils.
+- Host utilities include Bash, `apt`, `apt-get`, `timeout`, `pct`, `awk`, `mktemp`, `hostname`, `date`, `python3`, `curl`, `head`, and standard coreutils.
 - An optional Discord webhook URL; no webhook is needed for a local summary.
 
 ## How it works
 
-1. Lists running LXCs on the local Proxmox host; stopped containers are skipped.
-2. Obtains each container's hostname and OS description, then runs `apt-get update`, `apt-get upgrade`, `apt-get dist-upgrade`, `apt-get autoremove`, and `apt-get clean` non-interactively, in that order. An update or upgrade failure stops the remaining commands for that container. Existing configuration files are generally kept via the script's dpkg options.
-3. Applies a default 300-second timeout to the in-container update command and collects a per-container summary. Hostname and OS discovery occur outside that timeout.
-4. An EXIT trap sends the summary to Discord when configured, otherwise prints it locally. Discord content is truncated to 1900 characters; summaries may omit later containers. Abrupt termination (for example SIGKILL or power loss) cannot run the trap.
+1. Refreshes host package lists with `apt-get update`, with a 300-second timeout, then counts packages reported by `apt list --upgradable`. No host packages are installed. A failed refresh, including a repository fetch failure, is reported without a potentially stale count; container updates still proceed. The count reflects APT candidates, not a guarantee all packages will be installed by a particular upgrade command.
+2. Lists running LXCs on the local Proxmox host; stopped containers are skipped.
+3. Obtains each container's hostname and OS description, then runs `apt-get update`, `apt-get upgrade`, `apt-get dist-upgrade`, `apt-get autoremove`, and `apt-get clean` non-interactively, in that order. An update or upgrade failure stops the remaining commands for that container. Existing configuration files are generally kept via the script's dpkg options.
+4. Applies a default 300-second timeout to the in-container update command and collects a per-container summary. Hostname and OS discovery occur outside that timeout.
+5. An EXIT trap sends the summary to Discord when configured, otherwise prints it locally. Discord content is truncated to 1900 characters; summaries may omit later containers. Abrupt termination (for example SIGKILL or power loss) cannot run the trap.
 
 ## Configure and run
 
