@@ -93,26 +93,11 @@ else
         
         UPDATE_SCRIPT=$(cat << 'EOF'
 export DEBIAN_FRONTEND=noninteractive
-apt-get update >/dev/null 2>&1
-UPGRADE_OUT=$(apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" && apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold")
+apt-get update >/dev/null 2>&1 || exit $?
+UPGRADE_OUT=$(apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold")
 EXIT_CODE=$?
-if [ $EXIT_CODE -ne 0 ]; then
-    exit $EXIT_CODE
-fi
-
-apt-get autoremove -y >/dev/null 2>&1
-apt-get clean >/dev/null 2>&1
-
-if [ -f /usr/local/bin/update ]; then
-    /usr/local/bin/update < /dev/null >/dev/null 2>&1
-    echo "HELPER_UPDATED"
-elif [ -f /usr/bin/update ]; then
-    /usr/bin/update < /dev/null >/dev/null 2>&1
-    echo "HELPER_UPDATED"
-elif grep -q "^alias update=" /root/.bashrc 2>/dev/null; then
-    ALIAS_CMD=$(grep "^alias update=" /root/.bashrc | head -n1 | sed -E "s/^alias update=['\"](.*)['\"]/\1/")
-    eval "$ALIAS_CMD" < /dev/null >/dev/null 2>&1
-    echo "HELPER_UPDATED"
+if [ "$EXIT_CODE" -ne 0 ]; then
+    exit "$EXIT_CODE"
 fi
 
 if echo "$UPGRADE_OUT" | grep -q "0 upgraded, 0 newly installed"; then
@@ -128,19 +113,14 @@ EOF
         EXEC_STATUS=$?
 
         if [ $EXEC_STATUS -eq 124 ]; then
-            echo "⏱️ LXC $VMID ($CT_NAME) [$CT_OS]: Update timed out after $UPDATE_TIMEOUT (stuck at prompt/helper script)." >> "$SUMMARY_FILE"
+            echo "⏱️ LXC $VMID ($CT_NAME) [$CT_OS]: Update timed out after $UPDATE_TIMEOUT (package update or upgrade)." >> "$SUMMARY_FILE"
         elif [ $EXEC_STATUS -eq 0 ]; then
-            HELPER_STR=""
-            if echo "$EXEC_OUTPUT" | grep -q "HELPER_UPDATED"; then
-                HELPER_STR=" (App updated via helper script)"
-            fi
-
             if echo "$EXEC_OUTPUT" | grep -q "NO_PATCHES"; then
-                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Fully updated, no patches applied.$HELPER_STR" >> "$SUMMARY_FILE"
+                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Fully updated, no patches applied." >> "$SUMMARY_FILE"
             elif echo "$EXEC_OUTPUT" | grep -q "PATCHES_APPLIED"; then
-                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Successfully updated (patches applied).$HELPER_STR" >> "$SUMMARY_FILE"
+                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Successfully updated (patches applied)." >> "$SUMMARY_FILE"
             else
-                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Successfully updated.$HELPER_STR" >> "$SUMMARY_FILE"
+                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Successfully updated." >> "$SUMMARY_FILE"
             fi
         else
             echo "❌ LXC $VMID ($CT_NAME) [$CT_OS]: Failed to update (Exit code: $EXEC_STATUS). Check manually." >> "$SUMMARY_FILE"

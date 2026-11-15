@@ -1,8 +1,8 @@
 # Proxmox LXC Autonomous Updater
 
-A Bash script for a Proxmox VE host that discovers running LXC containers, performs Debian-style package updates sequentially, optionally invokes an in-container update helper, and reports a summary locally or to a Discord webhook.
+A Bash script for a Proxmox VE host that discovers running LXC containers, performs Debian-style package updates sequentially and reports a summary locally or to a Discord webhook.
 
-> **Important:** This script makes real changes inside every running container on the host. It runs `apt-get dist-upgrade` and `apt-get autoremove`, which can remove packages, and may invoke application-specific update commands. Review it, ensure tested backups are available, and use a maintenance window. There is no dry-run mode or container exclusion list.
+> **Important:** This script makes real changes inside every running container on the host. It runs `apt-get update` and `apt-get upgrade` inside running containers. Package upgrades can change or restart services. It does not run application update helpers, `dist-upgrade`, or `autoremove`. Review it, ensure tested backups are available, and use a maintenance window. There is no dry-run mode or container exclusion list.
 
 ## Requirements
 
@@ -14,10 +14,9 @@ A Bash script for a Proxmox VE host that discovers running LXC containers, perfo
 ## How it works
 
 1. Lists running LXCs on the local Proxmox host; stopped containers are skipped.
-2. Obtains each container's hostname and OS description, then runs `apt-get update`, `upgrade`, `dist-upgrade`, `autoremove`, and `clean` non-interactively. Existing configuration files are generally kept via the script's dpkg options.
-3. If present, runs `/usr/local/bin/update`, otherwise `/usr/bin/update`, otherwise an `update` alias found in `/root/.bashrc`. **Review those helpers before use:** they can perform application-specific operations, and alias content is executed with `eval`.
-4. Applies a default 300-second timeout to the in-container update command and collects a per-container summary. Hostname and OS discovery occur outside that timeout.
-5. An EXIT trap sends the summary to Discord when configured, otherwise prints it locally. Discord content is truncated to 1900 characters; summaries may omit later containers. Abrupt termination (for example SIGKILL or power loss) cannot run the trap.
+2. Obtains each container's hostname and OS description, then runs `apt-get update` followed by `apt-get upgrade` non-interactively. An update failure stops the upgrade for that container. Existing configuration files are generally kept via the script's dpkg options.
+3. Applies a default 300-second timeout to the in-container update command and collects a per-container summary. Hostname and OS discovery occur outside that timeout.
+4. An EXIT trap sends the summary to Discord when configured, otherwise prints it locally. Discord content is truncated to 1900 characters; summaries may omit later containers. Abrupt termination (for example SIGKILL or power loss) cannot run the trap.
 
 ## Configure and run
 
@@ -43,8 +42,8 @@ Place the private config beside the deployed script (or set `LXC_UPDATE_CONFIG` 
 
 ## Reporting limitations and safety
 
-- The script does not check `apt-get update`, `autoremove`, `clean`, or helper exit statuses reliably. A successful summary is **not proof** every operation or application update succeeded.
-- The `NO_PATCHES` detection searches the combined upgrade output and can misclassify results. Review package logs inside containers for definitive results.
+- The script checks the exit status of `apt-get update` and `apt-get upgrade`, but a successful summary is not proof that services are healthy or that applications using separate update mechanisms are current.
+- The `NO_PATCHES` detection searches the upgrade output and can misclassify results. Review package logs inside containers for definitive results.
 - On a timeout or interrupted update, package management may need manual recovery; check container and dpkg/apt state before retrying.
 - The script's summary can be truncated, and Discord/network errors do not necessarily make the overall run fail. Verify delivery and review logs separately.
 - `pct list` and other host command failures are not rigorously distinguished from an empty result; independently confirm expected containers were checked.
