@@ -7,17 +7,17 @@ A Bash script that refreshes Proxmox host package lists, reports the number of p
 ## Requirements
 
 - Run on a Proxmox VE host with sufficient privileges to use `pct list` and `pct exec` (typically root).
-- Containers must support Bash, `apt-get`, GNU `timeout`, and the utilities used by the update script. It is intended for Debian/Ubuntu-style containers, not arbitrary container distributions.
-- Host utilities include Bash, `apt`, `apt-get`, `timeout`, `pct`, `awk`, `mktemp`, `hostname`, `date`, `python3`, `curl`, `head`, and standard coreutils.
+- Containers must support Bash, `apt-get`, GNU `timeout`, `mktemp`, `tee`, and standard shell utilities. It is intended for Debian/Ubuntu-style containers, not arbitrary container distributions.
+- Host utilities include Bash, `apt`, `apt-get`, `timeout`, `pct`, `awk`, `mktemp`, `hostname`, `date`, `python3`, `curl`, and standard coreutils.
 - An optional Discord webhook URL; no webhook is needed for a local summary.
 
 ## How it works
 
 1. Refreshes host package lists with `apt-get update`, with a 300-second timeout, then counts packages reported by `apt list --upgradable`. No host packages are installed. A failed refresh, including a repository fetch failure, is reported without a potentially stale count; container updates still proceed. The count reflects APT candidates, not a guarantee all packages will be installed by a particular upgrade command.
 2. Lists running LXCs on the local Proxmox host; stopped containers are skipped.
-3. Obtains each container's hostname and OS description, then runs `apt-get update`, `apt-get upgrade`, `apt-get dist-upgrade`, `apt-get autoremove`, and `apt-get clean` non-interactively, in that order. An update or upgrade failure stops the remaining commands for that container. Existing configuration files are generally kept via the script's dpkg options.
-4. Applies a default 300-second timeout to the in-container update command and collects a per-container summary. Hostname and OS discovery occur outside that timeout.
-5. An EXIT trap sends the summary to Discord when configured, otherwise prints it locally. Discord content is truncated to 1900 characters; summaries may omit later containers. Abrupt termination (for example SIGKILL or power loss) cannot run the trap.
+3. Obtains each container's hostname and OS description, then runs `apt-get update`, `apt-get upgrade`, `apt-get dist-upgrade`, `apt-get autoremove`, and `apt-get clean` non-interactively, in that order. Any command failure stops the remaining commands for that container. Existing configuration files are generally kept via the script's dpkg options.
+4. Applies a default 300-second timeout to the in-container update command and collects a per-container summary, including captured command output on failure. Hostname and OS discovery, `pct list`, and the host upgradable-package listing occur outside that timeout.
+5. An EXIT trap sends the full summary to Discord in ordered chunks (up to 1900 UTF-16 units each) when configured, otherwise prints it locally. Failed delivery prints the full report to stderr and sets a nonzero exit status. Discord requests have a 10-second connect and 30-second total timeout per chunk; there is no retry or rate-limit handling. Abrupt termination (for example SIGKILL or power loss) cannot run the trap.
 
 ## Configure and run
 
@@ -43,8 +43,9 @@ Place the private config beside the deployed script (or set `LXC_UPDATE_CONFIG` 
 
 ## Reporting limitations and safety
 
-- The script checks the exit status of `apt-get update`, `apt-get upgrade`, and `apt-get dist-upgrade` but does not check `autoremove` or `clean` failures; but a successful summary is not proof that services are healthy or that applications using separate update mechanisms are current.
+- Host refresh/listing failures, enumeration failures, container update failures/timeouts, and webhook delivery failures produce a nonzero overall status. Other containers still run after a host or container failure. Config errors stop before updates.
+- Error output may contain sensitive repository details; protect logs and the Discord channel. A successful summary is not proof that services are healthy or that applications using separate update mechanisms are current.
 - The `NO_PATCHES` detection searches both upgrade outputs and can misclassify results. Review package logs inside containers for definitive results.
-- On a timeout or interrupted update, package management may need manual recovery; check container and dpkg/apt state before retrying.
-- The script's summary can be truncated, and Discord/network errors do not necessarily make the overall run fail. Verify delivery and review logs separately.
-- `pct list` and other host command failures are not rigorously distinguished from an empty result; independently confirm expected containers were checked.
+- On a timeout or interrupted update, package management may need manual recovery; check container and dpkg/apt state before retrying. A timed-out `pct exec` or unresponsive host-side call is not independently bounded by the in-container timeout.
+- Hostname and OS discovery failures fall back to unknown values and do not fail the run. An empty successful `pct list` result is treated as no running containers.
+- Run the isolated mock tests with `python3 -m unittest discover -s tests -v`. Tests substitute `apt`, `apt-get`, `pct`, `timeout`, and `curl`; they do not validate a real Proxmox host or Discord delivery.
