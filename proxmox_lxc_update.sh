@@ -94,13 +94,12 @@ else
         UPDATE_SCRIPT=$(cat << 'EOF'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1 || exit $?
-UPGRADE_OUT=$(apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold")
-EXIT_CODE=$?
-if [ "$EXIT_CODE" -ne 0 ]; then
-    exit "$EXIT_CODE"
-fi
+UPGRADE_OUT=$(apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold") || exit $?
+DIST_UPGRADE_OUT=$(apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold") || exit $?
+apt-get autoremove -y >/dev/null 2>&1
+apt-get clean >/dev/null 2>&1
 
-if echo "$UPGRADE_OUT" | grep -q "0 upgraded, 0 newly installed"; then
+if echo "$UPGRADE_OUT" | grep -q "0 upgraded, 0 newly installed" && echo "$DIST_UPGRADE_OUT" | grep -q "0 upgraded, 0 newly installed"; then
     echo "NO_PATCHES"
 else
     echo "PATCHES_APPLIED"
