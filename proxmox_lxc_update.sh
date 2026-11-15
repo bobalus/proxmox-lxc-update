@@ -1,0 +1,136 @@
+#!/bin/bash
+
+# --- Ensure Cron has access to Proxmox binaries (like /usr/sbin/pct) ---
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# ==============================================================================
+# Proxmox LXC Autonomous Updater Script
+# ==============================================================================
+# This script lists all running LXCs and updates them non-interactively.
+# It then sends a summary report to a Discord webhook.
+#
+# ==============================================================================
+# Proxmox LXC Autonomous Updater Script (with OS Version & Timeout Handling)
+# ==============================================================================
+# This script lists all running LXCs, retrieves their OS version, updates them 
+# non-interactively with a safety timeout, and sends a summary report to Discord.
+#
+# ==============================================================================
+# Proxmox LXC Autonomous Updater Script (with OS Version, Timeouts & Safe Trapping)
+# ==============================================================================
+#
+# Recommended cron entry (e.g., run every Sunday at 3 AM):
+# 0 3 * * 0 /path/to/proxmox_lxc_update.sh
+# ==============================================================================
+
+# --- Configuration ---
+# Replace with your actual Discord Webhook URL
+WEBHOOK_URL="${WEBHOOK_URL:-}"
+# Maximum time allowed per container update before timing out (e.g., 300s = 5 minutes)
+UPDATE_TIMEOUT="300s"
+
+# --- Script Initialization ---
+SUMMARY_FILE=$(mktemp)
+PVE_HOSTNAME=$(hostname)
+echo "**Proxmox Server: $PVE_HOSTNAME | LXC Update Summary - $(date '+%Y-%m-%d %H:%M:%S')**" > "$SUMMARY_FILE"
+echo "----------------------------------------" >> "$SUMMARY_FILE"
+
+# --- Cleanup & Notification Trap ---
+# This ensures that even if the script exits early or times out somewhere, 
+# the summary file is always sent to Discord before the script terminates.
+
+send_to_discord() {
+    echo "----------------------------------------" >> "$SUMMARY_FILE"
+    echo "Update process finished." >> "$SUMMARY_FILE"
+
+    if [ -n "$WEBHOOK_URL" ] && [ "$WEBHOOK_URL" != "YOUR_DISCORD_WEBHOOK_URL_HERE" ]; then
+        # Truncate content to fit under Discord's 2000 character limit
+        SUMMARY_CONTENT=$(cat "$SUMMARY_FILE" | head -c 1900)
+        
+        # Use Python 3 to safely build the JSON payload (no 'jq' required)
+        JSON_PAYLOAD=$(python3 -c 'import json, sys; print(json.dumps({"content": sys.stdin.read()}))' <<< "$SUMMARY_CONTENT")
+        
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" -d "$JSON_PAYLOAD" "$WEBHOOK_URL")
+        
+        if [ "$HTTP_CODE" -eq 204 ] || [ "$HTTP_CODE" -eq 200 ]; then
+            echo "Successfully sent summary to Discord."
+        else
+            echo "Failed to send summary to Discord. HTTP Status: $HTTP_CODE"
+        fi
+    else
+        echo "Discord webhook URL not set or empty. Printing summary locally:"
+        cat "$SUMMARY_FILE"
+    fi
+    rm -f "$SUMMARY_FILE"
+}
+trap send_to_discord EXIT
+
+# Get a list of all running LXC container IDs
+RUNNING_LXCS=$(pct list | awk 'NR>1 && /running/ {print $1}')
+
+if [ -z "$RUNNING_LXCS" ]; then
+    echo "No running LXC containers found." >> "$SUMMARY_FILE"
+else
+    for VMID in $RUNNING_LXCS; do
+        CT_NAME=$(pct exec "$VMID" -- hostname 2>/dev/null || echo "Unknown")
+        CT_OS=$(pct exec "$VMID" -- bash -c 'source /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Unknown OS}" || echo "Unknown OS"' 2>/dev/null)
+        [ -z "$CT_OS" ] && CT_OS="Unknown OS"
+
+        echo "Updating LXC: $VMID ($CT_NAME - $CT_OS)..."
+        
+        UPDATE_SCRIPT=$(cat << 'EOF'
+export DEBIAN_FRONTEND=noninteractive
+apt-get update >/dev/null 2>&1
+UPGRADE_OUT=$(apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" && apt-get dist-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold")
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+    exit $EXIT_CODE
+fi
+
+apt-get autoremove -y >/dev/null 2>&1
+apt-get clean >/dev/null 2>&1
+
+if [ -f /usr/local/bin/update ]; then
+    /usr/local/bin/update < /dev/null >/dev/null 2>&1
+    echo "HELPER_UPDATED"
+elif [ -f /usr/bin/update ]; then
+    /usr/bin/update < /dev/null >/dev/null 2>&1
+    echo "HELPER_UPDATED"
+elif grep -q "^alias update=" /root/.bashrc 2>/dev/null; then
+    ALIAS_CMD=$(grep "^alias update=" /root/.bashrc | head -n1 | sed -E "s/^alias update=['\"](.*)['\"]/\1/")
+    eval "$ALIAS_CMD" < /dev/null >/dev/null 2>&1
+    echo "HELPER_UPDATED"
+fi
+
+if echo "$UPGRADE_OUT" | grep -q "0 upgraded, 0 newly installed"; then
+    echo "NO_PATCHES"
+else
+    echo "PATCHES_APPLIED"
+fi
+EOF
+)
+
+        # Execute with timeout wrapper
+        EXEC_OUTPUT=$(pct exec "$VMID" -- timeout "$UPDATE_TIMEOUT" bash -c "$UPDATE_SCRIPT" 2>&1)
+        EXEC_STATUS=$?
+
+        if [ $EXEC_STATUS -eq 124 ]; then
+            echo "⏱️ LXC $VMID ($CT_NAME) [$CT_OS]: Update timed out after $UPDATE_TIMEOUT (stuck at prompt/helper script)." >> "$SUMMARY_FILE"
+        elif [ $EXEC_STATUS -eq 0 ]; then
+            HELPER_STR=""
+            if echo "$EXEC_OUTPUT" | grep -q "HELPER_UPDATED"; then
+                HELPER_STR=" (App updated via helper script)"
+            fi
+
+            if echo "$EXEC_OUTPUT" | grep -q "NO_PATCHES"; then
+                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Fully updated, no patches applied.$HELPER_STR" >> "$SUMMARY_FILE"
+            elif echo "$EXEC_OUTPUT" | grep -q "PATCHES_APPLIED"; then
+                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Successfully updated (patches applied).$HELPER_STR" >> "$SUMMARY_FILE"
+            else
+                echo "✅ LXC $VMID ($CT_NAME) [$CT_OS]: Successfully updated.$HELPER_STR" >> "$SUMMARY_FILE"
+            fi
+        else
+            echo "❌ LXC $VMID ($CT_NAME) [$CT_OS]: Failed to update (Exit code: $EXEC_STATUS). Check manually." >> "$SUMMARY_FILE"
+        fi
+    done
+fi
