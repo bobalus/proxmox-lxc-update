@@ -21,7 +21,7 @@ A Bash script for a Proxmox VE host that discovers running LXC containers, perfo
 
 ## Configure and run
 
-1. Review `proxmox_lxc_update.sh` and adjust `UPDATE_TIMEOUT` if needed. Secure the script and any webhook credentials; don't put a real webhook in a Git-tracked file.
+1. Review `proxmox_lxc_update.sh` and adjust `UPDATE_TIMEOUT` if needed. For Discord, copy `proxmox_lxc_update.conf.example` to `proxmox_lxc_update.conf` beside the script, replace its contents with the webhook URL on one line, and run `chmod 600 proxmox_lxc_update.conf`. Keep it out of Git in a trusted, non-world-writable directory. The config is read as text, not executed.
 2. Make executable: `chmod 750 proxmox_lxc_update.sh`.
 3. On the Proxmox host, with backups verified and a maintenance window approved, run as root:
 
@@ -29,7 +29,7 @@ A Bash script for a Proxmox VE host that discovers running LXC containers, perfo
    sudo ./proxmox_lxc_update.sh
    ```
 
-   Without `WEBHOOK_URL`, the script prints the summary instead of sending it. To configure Discord, provide `WEBHOOK_URL` securely in the process environment. Be aware that `sudo` commonly drops environment variables: configure the environment for the root process explicitly and keep the secret out of shell history, cron files, and the repository. Rotate an exposed webhook.
+   Without a config file, or with an empty file or the example placeholder, the script prints the summary locally. An unreadable existing config or a missing explicitly specified config stops the script before updates. Set `LXC_UPDATE_CONFIG` to an alternate absolute path if needed; ensure the root process can read it. Rotate an exposed webhook.
 
 ## Scheduling
 
@@ -39,7 +39,7 @@ After manual validation, a root crontab entry such as the following runs it ever
 0 3 * * 0 /root/server-scripts/proxmox_lxc_update.sh >>/var/log/proxmox-lxc-update.log 2>&1
 ```
 
-Configure the webhook securely for the cron process separately if needed, and manage log permissions and rotation. Avoid overlapping runs; this script has no locking. Each Proxmox host must be scheduled separately. Test the configuration before unattended use.
+Place the private config beside the deployed script (or set `LXC_UPDATE_CONFIG` in root's crontab), and manage log permissions and rotation. Avoid overlapping runs; this script has no locking. Each Proxmox host must be scheduled separately. Test the configuration before unattended use.
 
 ## Reporting limitations and safety
 

@@ -25,7 +25,20 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # --- Configuration ---
 # Replace with your actual Discord Webhook URL
-WEBHOOK_URL="${WEBHOOK_URL:-}"
+# The private config contains only the webhook URL on one line.
+# Set LXC_UPDATE_CONFIG to override the default path beside the script.
+CONFIG_FILE="${LXC_UPDATE_CONFIG:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/proxmox_lxc_update.conf}"
+WEBHOOK_URL=""
+if [ -f "$CONFIG_FILE" ]; then
+    if [ ! -r "$CONFIG_FILE" ]; then
+        echo "Cannot read webhook config: $CONFIG_FILE" >&2
+        exit 1
+    fi
+    IFS= read -r WEBHOOK_URL < "$CONFIG_FILE" || [ -n "$WEBHOOK_URL" ]
+elif [ -n "${LXC_UPDATE_CONFIG:-}" ]; then
+    echo "Webhook config not found: $CONFIG_FILE" >&2
+    exit 1
+fi
 # Maximum time allowed per container update before timing out (e.g., 300s = 5 minutes)
 UPDATE_TIMEOUT="300s"
 
